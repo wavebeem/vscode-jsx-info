@@ -8,3 +8,4 @@ src/**
 .gitignore
 tsconfig.json
 TODO.md
+node_modules
