@@ -2,7 +2,7 @@
   "name": "vscode-jsx-info",
   "displayName": "jsx-info",
   "description": "VSCode integration for jsx-info",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "publisher": "wavebeem",
   "main": "./out/extension.js",
   "icon": "img/icon.png",
@@ -18,7 +18,8 @@
     "upgrade": "npm-check -u",
     "vscode:prepublish": "npm run build",
     "build": "tsc",
-    "start": "tsc --watch"
+    "start": "tsc --watch",
+    "postversion": "git push && git push --tags && vsce publish"
   },
   "devDependencies": {
     "@types/node": "^14.14.16",
