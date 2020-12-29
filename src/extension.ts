@@ -43,7 +43,7 @@ async function openFile(
 function sortObject<A>(
   dict: Record<string, A>,
   direction: "asc" | "desc",
-  getSortKey: (key: string, value: A) => string | A
+  getSortKey: (key: string, value: A) => any
 ): [string, A][] {
   const dir = direction === "asc" ? 1 : -1;
   const items: [string, A][] = [];
@@ -217,7 +217,7 @@ class JSXInfoProvider implements vscode.TreeDataProvider<TreeItem> {
         return [new TreeInfo("Scanning...")];
       case "ok": {
         const { result } = this.mode;
-        const sep = "  ";
+        const sep = "  \u{00b7}  ";
         return [
           new TreeCommand("Run", "jsxInfo.run", []),
           new TreeCommand("Refresh", "jsxInfo.refresh", []),
@@ -254,7 +254,7 @@ class JSXInfoProvider implements vscode.TreeDataProvider<TreeItem> {
           ]),
           this.searchReport === "Usage"
             ? new TreeFolder(
-                "Report (Usage)",
+                "Usage Report",
                 sortObjectValuesDesc(result.componentUsage).map(
                   ([componentName, count]) => {
                     return new TreeInfo(`${count}${sep}<${componentName}>`);
@@ -263,52 +263,50 @@ class JSXInfoProvider implements vscode.TreeDataProvider<TreeItem> {
               )
             : this.searchReport === "Props"
             ? new TreeFolder(
-                "Report (Props)",
-                sortObjectKeysAsc(result.propUsage).map(
-                  ([componentName, propUsage]) => {
+                "Props Report",
+                sortObject(
+                  result.propUsage,
+                  "desc",
+                  (k) => result.componentUsage[k]
+                ).map(([componentName, propUsage]) => {
+                  const total = result.componentUsage[componentName];
+                  return new TreeFolder(
+                    `<${componentName}>${sep}${total}`,
+                    sortObjectValuesDesc(propUsage).map(([propName, count]) => {
+                      const pct = ((count / total) * 100).toFixed(0);
+                      return new TreeInfo(
+                        `${count}${sep}${propName}${sep}${pct}%`
+                      );
+                    })
+                  );
+                })
+              )
+            : new TreeFolder(
+                "Lines Report",
+                sortObjectKeysAsc(result.lineUsage).map(
+                  ([componentName, lineUsage]) => {
                     return new TreeFolder(
-                      `<${componentName}>`,
-                      sortObjectValuesDesc(propUsage).map(
-                        ([propName, count]) => {
-                          return new TreeInfo(`${count}${sep}${propName}`);
+                      componentName,
+                      sortObjectKeysAsc(lineUsage).map(
+                        ([propName, objects]) => {
+                          return new TreeFolder(
+                            propName,
+                            objects.map((obj) => {
+                              return new TreeOpenFile(
+                                obj.propCode,
+                                obj.filename,
+                                obj.startLoc.line,
+                                obj.startLoc.column,
+                                obj.endLoc.line,
+                                obj.endLoc.column
+                              );
+                            })
+                          );
                         }
                       )
                     );
                   }
                 )
-              )
-            : new TreeFolder(
-                "Report (Lines)",
-                this.searchProp
-                  ? sortObjectKeysAsc(result.lineUsage).map(
-                      ([componentName, lineUsage]) => {
-                        return new TreeFolder(
-                          componentName,
-                          sortObjectKeysAsc(lineUsage).map(
-                            ([propName, objects]) => {
-                              return new TreeFolder(
-                                propName,
-                                objects.map((obj) => {
-                                  return new TreeOpenFile(
-                                    obj.propCode,
-                                    obj.filename,
-                                    obj.startLoc.line,
-                                    obj.startLoc.column,
-                                    obj.endLoc.line,
-                                    obj.endLoc.column
-                                  );
-                                })
-                              );
-                            }
-                          )
-                        );
-                      }
-                    )
-                  : [
-                      new TreeInfo(
-                        "Select the `lines` report to see lines where a prop was used"
-                      ),
-                    ]
               ),
         ];
       }
