@@ -43,24 +43,7 @@
         "command": "jsxInfo.refresh",
         "title": "JSX Info: Refresh"
       }
-    ],
-    "menus": {
-      "commandPalette": [
-        {
-          "command": "jsxInfo.run"
-        }
-      ],
-      "view/title": [
-        {
-          "command": "jsxInfo.run",
-          "when": "view == jsxInfo"
-        },
-        {
-          "command": "jsxInfo.refresh",
-          "when": "view == jsxInfo"
-        }
-      ]
-    }
+    ]
   },
   "dependencies": {
     "jsx-info": "^3.0.0"

@@ -102,34 +102,26 @@ class JSXInfoProvider implements vscode.TreeDataProvider<TreeItem> {
   >();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
+  searchDir?: string;
+  searchComponents?: string;
+  searchReport?: string;
+  searchProp?: string;
+
   mode: Mode = { name: "empty" };
 
   async refresh(): Promise<void> {
-    logger.info("TODO: Refresh the data");
-  }
-
-  async run(): Promise<void> {
     try {
       this.mode = { name: "loading" };
       this._onDidChangeTreeData.fire();
-      const [dir = await vscode.window.showWorkspaceFolderPick()] =
-        vscode.workspace.workspaceFolders || [];
-      if (!dir) {
-        return;
-      }
-      if (dir.uri.scheme !== "file") {
-        vscode.window.showErrorMessage(
-          `JSX Info doesn't support files over ${dir.uri.scheme}`
-        );
-        return;
-      }
-      logger.info(dir);
+      const comp = this.searchComponents || "";
       const result = await jsxInfo.analyze({
-        directory: dir.uri.fsPath,
+        directory: this.searchDir,
+        components: comp === "" || comp === "*" ? [] : comp.split(/\s+/),
+        prop: this.searchProp,
       });
-      logger.info(result);
       this.mode = { name: "ok", result };
       this._onDidChangeTreeData.fire();
+      logger.info(result);
     } catch (err) {
       if (err instanceof Error) {
         vscode.window.showErrorMessage(err.message);
@@ -139,6 +131,75 @@ class JSXInfoProvider implements vscode.TreeDataProvider<TreeItem> {
         throw err;
       }
     }
+  }
+
+  async run(): Promise<void> {
+    const ok = await this._getOptions();
+    if (!ok) {
+      return;
+    }
+    this.refresh();
+  }
+
+  private async _getOptions(): Promise<boolean> {
+    const [
+      dir = await vscode.window.showWorkspaceFolderPick({
+        ignoreFocusOut: true,
+      }),
+    ] = vscode.workspace.workspaceFolders || [];
+    if (!dir) {
+      return false;
+    }
+    if (dir.uri.scheme !== "file") {
+      vscode.window.showErrorMessage(
+        `JSX Info doesn't support files over ${dir.uri.scheme}`
+      );
+      return false;
+    }
+    this.searchDir = dir.uri.fsPath;
+    this.searchComponents = await vscode.window.showInputBox({
+      prompt: "Which components?",
+      placeHolder: "space separated, blank or * for every component",
+      ignoreFocusOut: true,
+    });
+    if (this.searchComponents === undefined) {
+      return false;
+    }
+    const report = await vscode.window.showQuickPick(
+      [
+        {
+          label: "Usage",
+          description: "Total component usage",
+        },
+        {
+          label: "Props",
+          description: "Total prop usage",
+        },
+        {
+          label: "Lines",
+          description: "Show lines where certain props are used",
+        },
+      ],
+      {
+        ignoreFocusOut: true,
+      }
+    );
+    if (report === undefined) {
+      return false;
+    }
+    this.searchReport = report.label;
+    if (this.searchReport === "Lines") {
+      this.searchProp = await vscode.window.showInputBox({
+        prompt: "Which prop?",
+        placeHolder:
+          "`id` or `variant=primary` or `!className` or `type!=text`",
+        ignoreFocusOut: true,
+      });
+      if (this.searchProp === undefined || this.searchProp === "") {
+        return false;
+      }
+    }
+    return true;
   }
 
   getTreeItem(element: TreeItem): vscode.TreeItem {
@@ -153,20 +214,19 @@ class JSXInfoProvider implements vscode.TreeDataProvider<TreeItem> {
       case "empty":
         return [new TreeCommand("Run", "jsxInfo.run", [])];
       case "loading":
-        return [new TreeItem("Loading...")];
+        return [new TreeInfo("Scanning...")];
       case "ok": {
         const { result } = this.mode;
-        const sep = "  \u{2013}  ";
+        const sep = "  ";
         return [
           new TreeCommand("Run", "jsxInfo.run", []),
           new TreeCommand("Refresh", "jsxInfo.refresh", []),
           new TreeFolder(result.directory, [
             new TreeInfo(
-              `Scanned ${result.filenames.length} files in ${result.elapsedTime} seconds`
+              `${result.filenames.length} files in ${result.elapsedTime} seconds`
             ),
-            // new TreeInfo(`${result.filenames.length} files`),
             new TreeInfo(
-              `Found ${result.componentTotal} components used ${result.componentUsageTotal} times`
+              `${result.componentTotal} components, ${result.componentUsageTotal} uses`
             ),
             Object.keys(result.errors).length > 0
               ? new TreeFolder(
@@ -192,52 +252,64 @@ class JSXInfoProvider implements vscode.TreeDataProvider<TreeItem> {
                 )
               : undefined,
           ]),
-          new TreeFolderClosed(
-            "Component Usage",
-            sortObjectValuesDesc(result.componentUsage).map(
-              ([componentName, count]) => {
-                return new TreeInfo(`${count}${sep}<${componentName}>`);
-              }
-            )
-          ),
-          new TreeFolderClosed(
-            "Prop Usage",
-            sortObjectKeysAsc(result.propUsage).map(
-              ([componentName, propUsage]) => {
-                return new TreeFolder(
-                  `<${componentName}>`,
-                  sortObjectValuesDesc(propUsage).map(([propName, count]) => {
-                    return new TreeInfo(`${count}${sep}${propName}`);
-                  })
-                );
-              }
-            )
-          ),
-          new TreeFolderClosed(
-            "Line Usage",
-            sortObjectKeysAsc(result.lineUsage).map(
-              ([componentName, lineUsage]) => {
-                return new TreeFolder(
-                  componentName,
-                  sortObjectKeysAsc(lineUsage).map(([propName, objects]) => {
+          this.searchReport === "Usage"
+            ? new TreeFolder(
+                "Report (Usage)",
+                sortObjectValuesDesc(result.componentUsage).map(
+                  ([componentName, count]) => {
+                    return new TreeInfo(`${count}${sep}<${componentName}>`);
+                  }
+                )
+              )
+            : this.searchReport === "Props"
+            ? new TreeFolder(
+                "Report (Props)",
+                sortObjectKeysAsc(result.propUsage).map(
+                  ([componentName, propUsage]) => {
                     return new TreeFolder(
-                      propName,
-                      objects.map((obj) => {
-                        return new TreeOpenFile(
-                          obj.propCode,
-                          obj.filename,
-                          obj.startLoc.line,
-                          obj.startLoc.column,
-                          obj.endLoc.line,
-                          obj.endLoc.column
-                        );
-                      })
+                      `<${componentName}>`,
+                      sortObjectValuesDesc(propUsage).map(
+                        ([propName, count]) => {
+                          return new TreeInfo(`${count}${sep}${propName}`);
+                        }
+                      )
                     );
-                  })
-                );
-              }
-            )
-          ),
+                  }
+                )
+              )
+            : new TreeFolder(
+                "Report (Lines)",
+                this.searchProp
+                  ? sortObjectKeysAsc(result.lineUsage).map(
+                      ([componentName, lineUsage]) => {
+                        return new TreeFolder(
+                          componentName,
+                          sortObjectKeysAsc(lineUsage).map(
+                            ([propName, objects]) => {
+                              return new TreeFolder(
+                                propName,
+                                objects.map((obj) => {
+                                  return new TreeOpenFile(
+                                    obj.propCode,
+                                    obj.filename,
+                                    obj.startLoc.line,
+                                    obj.startLoc.column,
+                                    obj.endLoc.line,
+                                    obj.endLoc.column
+                                  );
+                                })
+                              );
+                            }
+                          )
+                        );
+                      }
+                    )
+                  : [
+                      new TreeInfo(
+                        "Select the `lines` report to see lines where a prop was used"
+                      ),
+                    ]
+              ),
         ];
       }
       default:
@@ -253,22 +325,18 @@ class TreeItem extends vscode.TreeItem {
 class TreeFolder extends TreeItem {
   constructor(label: string, children: (TreeItem | undefined)[]) {
     super(label);
-    this.children = children.filter((c) => c) as TreeItem[];
+    if (children.length === 0) {
+      this.children = [new TreeInfo("No results")];
+    } else {
+      this.children = children.filter((c) => c) as TreeItem[];
+    }
     this.collapsibleState = vscode.TreeItemCollapsibleState.Expanded;
   }
 }
 
-class TreeFolderClosed extends TreeFolder {
-  constructor(label: string, children: (TreeItem | undefined)[]) {
-    super(label, children);
-    this.collapsibleState = vscode.TreeItemCollapsibleState.Collapsed;
-  }
-}
-
 class TreeInfo extends TreeItem {
-  constructor(label: string, description?: string) {
+  constructor(label: string) {
     super(label);
-    this.description = description;
     this.collapsibleState = vscode.TreeItemCollapsibleState.None;
   }
 }
@@ -291,7 +359,6 @@ class TreeOpenFile extends TreeItem {
     endColumn: number
   ) {
     super(label);
-    this.description = `${startLine}:${startColumn}-${endLine}:${endColumn}`;
     this.collapsibleState = vscode.TreeItemCollapsibleState.None;
     this.command = {
       title: label,

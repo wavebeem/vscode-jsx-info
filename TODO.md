@@ -1,0 +1,2 @@
+- Show jsx-info panel when running it from the command palette
+- Add icons
