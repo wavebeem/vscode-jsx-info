@@ -1,7 +1,6 @@
 import * as vscode from "vscode";
 import * as jsxInfo from "jsx-info";
 import * as logger from "./logger";
-import { start } from "repl";
 
 logger.info("JSX Info loaded");
 
@@ -19,11 +18,21 @@ async function openFile(
   try {
     const doc = await vscode.workspace.openTextDocument(filename);
     const editor = await vscode.window.showTextDocument(doc);
-    editor.selection = new vscode.Selection(
-      startLine,
+    const range = new vscode.Range(
+      startLine - 1,
       startColumn,
-      endLine,
+      endLine - 1,
       endColumn
+    );
+    editor.revealRange(
+      range,
+      vscode.TextEditorRevealType.InCenterIfOutsideViewport
+    );
+    editor.selection = new vscode.Selection(
+      range.start.line,
+      range.start.character,
+      range.end.line,
+      range.end.character
     );
   } catch (err) {
     vscode.window.showErrorMessage(err.message);
@@ -164,7 +173,7 @@ class JSXInfoProvider implements vscode.TreeDataProvider<TreeItem> {
                   "Errors",
                   sortObjectKeysAsc(result.errors).map(([filename, obj]) => {
                     return new TreeOpenFile(
-                      obj.message,
+                      filename,
                       filename,
                       obj.loc.line,
                       obj.loc.column,
@@ -183,8 +192,15 @@ class JSXInfoProvider implements vscode.TreeDataProvider<TreeItem> {
                 )
               : undefined,
           ]),
-          // TODO: result.lineUsage
-          new TreeFolder(
+          new TreeFolderClosed(
+            "Component Usage",
+            sortObjectValuesDesc(result.componentUsage).map(
+              ([componentName, count]) => {
+                return new TreeInfo(`${count}${sep}<${componentName}>`);
+              }
+            )
+          ),
+          new TreeFolderClosed(
             "Prop Usage",
             sortObjectKeysAsc(result.propUsage).map(
               ([componentName, propUsage]) => {
@@ -197,11 +213,28 @@ class JSXInfoProvider implements vscode.TreeDataProvider<TreeItem> {
               }
             )
           ),
-          new TreeFolder(
-            "Component Usage",
-            sortObjectValuesDesc(result.componentUsage).map(
-              ([componentName, count]) => {
-                return new TreeInfo(`${count}${sep}<${componentName}>`);
+          new TreeFolderClosed(
+            "Line Usage",
+            sortObjectKeysAsc(result.lineUsage).map(
+              ([componentName, lineUsage]) => {
+                return new TreeFolder(
+                  componentName,
+                  sortObjectKeysAsc(lineUsage).map(([propName, objects]) => {
+                    return new TreeFolder(
+                      propName,
+                      objects.map((obj) => {
+                        return new TreeOpenFile(
+                          obj.propCode,
+                          obj.filename,
+                          obj.startLoc.line,
+                          obj.startLoc.column,
+                          obj.endLoc.line,
+                          obj.endLoc.column
+                        );
+                      })
+                    );
+                  })
+                );
               }
             )
           ),
@@ -222,6 +255,13 @@ class TreeFolder extends TreeItem {
     super(label);
     this.children = children.filter((c) => c) as TreeItem[];
     this.collapsibleState = vscode.TreeItemCollapsibleState.Expanded;
+  }
+}
+
+class TreeFolderClosed extends TreeFolder {
+  constructor(label: string, children: (TreeItem | undefined)[]) {
+    super(label, children);
+    this.collapsibleState = vscode.TreeItemCollapsibleState.Collapsed;
   }
 }
 
@@ -250,8 +290,8 @@ class TreeOpenFile extends TreeItem {
     endLine: number,
     endColumn: number
   ) {
-    super(filename);
-    this.description = `${startLine}:${startColumn}`;
+    super(label);
+    this.description = `${startLine}:${startColumn}-${endLine}:${endColumn}`;
     this.collapsibleState = vscode.TreeItemCollapsibleState.None;
     this.command = {
       title: label,
