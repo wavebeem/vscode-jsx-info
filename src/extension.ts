@@ -2,42 +2,76 @@ import * as vscode from "vscode";
 import * as jsxInfo from "jsx-info";
 import * as logger from "./logger";
 
-logger.info("JSX Info loaded");
-
-function assertNever(data: never): never {
-  throw new Error("assertNever: " + data);
+export function activate(_context: vscode.ExtensionContext) {
+  const jsxInfoProvider = new JSXInfoProvider();
+  const treeView = vscode.window.createTreeView("jsxInfo", {
+    treeDataProvider: jsxInfoProvider,
+    showCollapseAll: true,
+  });
+  vscode.commands.registerCommand("jsxInfo.run", async () => {
+    try {
+      await jsxInfoProvider.run(treeView);
+    } catch (err) {
+      vscode.window.showErrorMessage(err.message);
+      logger.fail(err.message);
+    }
+  });
+  vscode.commands.registerCommand("jsxInfo.refresh", async () => {
+    try {
+      await jsxInfoProvider.refresh(treeView);
+    } catch (err) {
+      vscode.window.showErrorMessage(err.message);
+      logger.fail(err.message);
+    }
+  });
+  vscode.commands.registerCommand(
+    "jsxInfo._openFile",
+    async (options: {
+      filename: string;
+      startLine: number;
+      startColumn: number;
+      endLine: number;
+      endColumn: number;
+    }) => {
+      try {
+        await openFile(options);
+      } catch (err) {
+        vscode.window.showErrorMessage(err.message);
+        logger.fail(err.message);
+      }
+    }
+  );
+  logger.info("JSX Info loaded");
 }
 
-async function openFile(
-  filename: string,
-  startLine: number,
-  startColumn: number,
-  endLine: number,
-  endColumn: number
-): Promise<void> {
-  try {
-    const doc = await vscode.workspace.openTextDocument(filename);
-    const editor = await vscode.window.showTextDocument(doc);
-    const range = new vscode.Range(
-      startLine - 1,
-      startColumn,
-      endLine - 1,
-      endColumn
-    );
-    editor.revealRange(
-      range,
-      vscode.TextEditorRevealType.InCenterIfOutsideViewport
-    );
-    editor.selection = new vscode.Selection(
-      range.start.line,
-      range.start.character,
-      range.end.line,
-      range.end.character
-    );
-  } catch (err) {
-    vscode.window.showErrorMessage(err.message);
-    logger.fail(err.message);
-  }
+function filterGaps<A>(items: (A | undefined)[]): A[] {
+  return items.filter((a) => a !== undefined) as A[];
+}
+
+async function openFile({
+  filename,
+  startLine,
+  startColumn,
+  endLine,
+  endColumn,
+}: {
+  filename: string;
+  startLine: number;
+  startColumn: number;
+  endLine: number;
+  endColumn: number;
+}): Promise<void> {
+  const doc = await vscode.workspace.openTextDocument(filename);
+  const editor = await vscode.window.showTextDocument(doc);
+  const range = new vscode.Range(
+    startLine - 1,
+    startColumn,
+    endLine - 1,
+    endColumn
+  );
+  const type = vscode.TextEditorRevealType.InCenterIfOutsideViewport;
+  editor.revealRange(range, type);
+  editor.selection = new vscode.Selection(range.start, range.end);
 }
 
 function sortObject<A>(
@@ -68,33 +102,17 @@ function sortObjectKeysAsc<A>(dict: Record<string, A>): [string, A][] {
   return sortObject(dict, "asc", (k, _v) => k);
 }
 
-export function activate(_context: vscode.ExtensionContext) {
-  const jsxInfoProvider = new JSXInfoProvider();
-  vscode.window.registerTreeDataProvider("jsxInfo", jsxInfoProvider);
-  vscode.commands.registerCommand("jsxInfo.run", () => {
-    jsxInfoProvider.run();
-  });
-  vscode.commands.registerCommand("jsxInfo.refresh", () => {
-    jsxInfoProvider.refresh();
-  });
-  vscode.commands.registerCommand(
-    "jsxInfo._openFile",
-    (
-      filename: string,
-      startLine: number,
-      startColumn: number,
-      endLine: number,
-      endColumn: number
-    ) => {
-      openFile(filename, startLine, startColumn, endLine, endColumn);
-    }
-  );
-}
-
 type Mode =
   | { name: "empty" }
-  | { name: "loading" }
-  | { name: "ok"; result: jsxInfo.Analysis };
+  | { name: "loading"; options: Options }
+  | { name: "ok"; options: Options; result: jsxInfo.Analysis };
+
+interface Options {
+  dir: string;
+  components: string[];
+  report: string;
+  prop?: string;
+}
 
 class JSXInfoProvider implements vscode.TreeDataProvider<TreeItem> {
   private _onDidChangeTreeData = new vscode.EventEmitter<
@@ -102,70 +120,191 @@ class JSXInfoProvider implements vscode.TreeDataProvider<TreeItem> {
   >();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
-  searchDir?: string;
-  searchComponents?: string;
-  searchReport?: string;
-  searchProp?: string;
+  private _mode: Mode = { name: "empty" };
 
-  mode: Mode = { name: "empty" };
+  itemRun = new TreeCommandRun();
+  itemRefresh = new TreeCommandRefresh();
+  itemLoading = new TreeLoading();
 
-  async refresh(): Promise<void> {
+  async refresh(treeView: vscode.TreeView<TreeItem>) {
+    if (this._mode.name === "loading") {
+      return;
+    }
+    const options =
+      this._mode.name === "empty"
+        ? await this._getOptions()
+        : this._mode.options;
+    if (!options) {
+      return;
+    }
+    await this._refresh(treeView, options);
+  }
+
+  async _refresh(
+    treeView: vscode.TreeView<TreeItem>,
+    options: Options
+  ): Promise<void> {
     try {
-      this.mode = { name: "loading" };
-      this._onDidChangeTreeData.fire();
-      const comp = this.searchComponents || "";
+      this._setMode({ name: "loading", options });
+      treeView.reveal(this.itemLoading);
       const result = await jsxInfo.analyze({
-        directory: this.searchDir,
-        components: comp === "" || comp === "*" ? [] : comp.split(/\s+/),
-        prop: this.searchProp,
+        directory: options.dir,
+        components: options.components,
+        prop: options.prop,
       });
-      this.mode = { name: "ok", result };
-      this._onDidChangeTreeData.fire();
-      logger.info(result);
+      this._setMode({ name: "ok", options, result });
+      logger.info(`Analysis took ${result.elapsedTime} seconds`);
     } catch (err) {
       if (err instanceof Error) {
         vscode.window.showErrorMessage(err.message);
-        this.mode = { name: "empty" };
-        this._onDidChangeTreeData.fire();
+        this._setMode({ name: "empty" });
       } else {
         throw err;
       }
     }
   }
 
-  async run(): Promise<void> {
-    const ok = await this._getOptions();
-    if (!ok) {
-      return;
-    }
-    this.refresh();
+  private _setMode(mode: Mode) {
+    this._mode = mode;
+    this._onDidChangeTreeData.fire();
   }
 
-  private async _getOptions(): Promise<boolean> {
+  private _render() {
+    if (this._mode.name === "empty") {
+      return [this.itemRun];
+    }
+    if (this._mode.name === "loading") {
+      return [this.itemLoading];
+    }
+    const { options, result } = this._mode;
+    return [
+      this.itemRun,
+      this.itemRefresh,
+      new TreeFolder(result.directory, [
+        new TreeInfo(
+          `${result.filenames.length} files in ${result.elapsedTime} seconds`
+        ),
+        new TreeInfo(
+          `${result.componentTotal} components, ${result.componentUsageTotal} uses`
+        ),
+        new TreeInfo(new Date().toLocaleString()),
+        Object.keys(result.errors).length > 0
+          ? new TreeErrors(
+              "Errors",
+              sortObjectKeysAsc(result.errors).map(([filename, obj]) => {
+                return new TreeOpenFile(
+                  filename,
+                  filename,
+                  obj.loc.line,
+                  obj.loc.column,
+                  obj.loc.line,
+                  obj.loc.column
+                );
+              })
+            )
+          : undefined,
+        result.suggestedPlugins.length > 0
+          ? new TreeSuggestions(
+              "Suggested Plugins",
+              result.suggestedPlugins.map((plugin) => {
+                return new TreeInfo(plugin);
+              })
+            )
+          : undefined,
+      ]),
+      options.report === "Usage"
+        ? new TreeFolder(
+            "Usage Report",
+            sortObjectValuesDesc(result.componentUsage).map(
+              ([componentName, count]) => {
+                return new TreeInfo(`${count}  <${componentName}>`);
+              }
+            )
+          )
+        : options.report === "Props"
+        ? new TreeFolder(
+            "Props Report",
+            sortObject(
+              result.propUsage,
+              "desc",
+              (k) => result.componentUsage[k]
+            ).map(([componentName, propUsage]) => {
+              const total = result.componentUsage[componentName];
+              return new TreeComponent(
+                `<${componentName}>  ${total}`,
+                sortObjectValuesDesc(propUsage).map(([propName, count]) => {
+                  const pct = ((count / total) * 100).toFixed(0);
+                  return new TreeInfo(`${count}  ${propName}`, `(${pct}%)`);
+                })
+              );
+            })
+          )
+        : new TreeFolder(
+            "Lines Report",
+            sortObjectKeysAsc(result.lineUsage).map(
+              ([componentName, lineUsage]) => {
+                return new TreeComponent(
+                  `<${componentName}>`,
+                  sortObjectKeysAsc(lineUsage).map(([propName, objects]) => {
+                    return new TreeProp(
+                      propName,
+                      objects.map((obj) => {
+                        return new TreeOpenFile(
+                          obj.propCode,
+                          obj.filename,
+                          obj.startLoc.line,
+                          obj.startLoc.column,
+                          obj.endLoc.line,
+                          obj.endLoc.column
+                        );
+                      })
+                    );
+                  })
+                );
+              }
+            )
+          ),
+    ];
+  }
+
+  async run(treeView: vscode.TreeView<TreeItem>): Promise<void> {
+    if (this._mode.name === "loading") {
+      return;
+    }
+    const options = await this._getOptions();
+    if (!options) {
+      return;
+    }
+    this._refresh(treeView, options);
+  }
+
+  private async _getOptions(): Promise<Options | undefined> {
     const [
-      dir = await vscode.window.showWorkspaceFolderPick({
+      folder = await vscode.window.showWorkspaceFolderPick({
         ignoreFocusOut: true,
       }),
     ] = vscode.workspace.workspaceFolders || [];
-    if (!dir) {
-      return false;
+    if (!folder) {
+      return undefined;
     }
-    if (dir.uri.scheme !== "file") {
+    if (folder.uri.scheme !== "file") {
       vscode.window.showErrorMessage(
-        `JSX Info doesn't support files over ${dir.uri.scheme}`
+        `JSX Info doesn't support files over ${folder.uri.scheme}`
       );
-      return false;
+      return undefined;
     }
-    this.searchDir = dir.uri.fsPath;
-    this.searchComponents = await vscode.window.showInputBox({
+    const dir = folder.uri.fsPath;
+    const componentsString = await vscode.window.showInputBox({
       prompt: "Which components?",
       placeHolder: "space separated, blank or * for every component",
       ignoreFocusOut: true,
     });
-    if (this.searchComponents === undefined) {
-      return false;
+    if (componentsString === undefined) {
+      return undefined;
     }
-    const report = await vscode.window.showQuickPick(
+    const components =
+      (componentsString || "*") === "*" ? [] : componentsString.split(/\s+/);
+    const reportPick = await vscode.window.showQuickPick(
       [
         {
           label: "Usage",
@@ -184,140 +323,45 @@ class JSXInfoProvider implements vscode.TreeDataProvider<TreeItem> {
         ignoreFocusOut: true,
       }
     );
-    if (report === undefined) {
-      return false;
+    if (reportPick === undefined) {
+      return undefined;
     }
-    this.searchReport = report.label;
-    if (this.searchReport === "Lines") {
-      this.searchProp = await vscode.window.showInputBox({
+    const report = reportPick.label;
+    let prop: string | undefined = undefined;
+    if (report === "Lines") {
+      const searchProp = await vscode.window.showInputBox({
         prompt: "Which prop?",
         placeHolder:
           "`id` or `variant=primary` or `!className` or `type!=text`",
         ignoreFocusOut: true,
       });
-      if (this.searchProp === undefined || this.searchProp === "") {
-        return false;
+      if (searchProp === undefined || searchProp === "") {
+        return undefined;
       }
+      prop = searchProp;
     }
-    return true;
+    return { components, dir, prop, report };
   }
 
-  getTreeItem(element: TreeItem): vscode.TreeItem {
+  getTreeItem(element: TreeItem) {
     return element;
   }
 
+  getParent(element: TreeItem) {
+    return element.parent;
+  }
+
   async getChildren(element?: TreeItem): Promise<TreeItem[]> {
-    if (element instanceof TreeItem) {
+    if (element) {
       return element.children;
     }
-    switch (this.mode.name) {
-      case "empty":
-        return [new TreeCommand("Run", "jsxInfo.run", [])];
-      case "loading":
-        return [new TreeInfo("Scanning...")];
-      case "ok": {
-        const { result } = this.mode;
-        const sep = "  \u{00b7}  ";
-        return [
-          new TreeCommand("Run", "jsxInfo.run", []),
-          new TreeCommand("Refresh", "jsxInfo.refresh", []),
-          new TreeFolder(result.directory, [
-            new TreeInfo(
-              `${result.filenames.length} files in ${result.elapsedTime} seconds`
-            ),
-            new TreeInfo(
-              `${result.componentTotal} components, ${result.componentUsageTotal} uses`
-            ),
-            Object.keys(result.errors).length > 0
-              ? new TreeFolder(
-                  "Errors",
-                  sortObjectKeysAsc(result.errors).map(([filename, obj]) => {
-                    return new TreeOpenFile(
-                      filename,
-                      filename,
-                      obj.loc.line,
-                      obj.loc.column,
-                      obj.loc.line,
-                      obj.loc.column
-                    );
-                  })
-                )
-              : undefined,
-            result.suggestedPlugins.length > 0
-              ? new TreeFolder(
-                  "Suggested Plugins",
-                  result.suggestedPlugins.map((plugin) => {
-                    return new TreeInfo(plugin);
-                  })
-                )
-              : undefined,
-          ]),
-          this.searchReport === "Usage"
-            ? new TreeFolder(
-                "Usage Report",
-                sortObjectValuesDesc(result.componentUsage).map(
-                  ([componentName, count]) => {
-                    return new TreeInfo(`${count}${sep}<${componentName}>`);
-                  }
-                )
-              )
-            : this.searchReport === "Props"
-            ? new TreeFolder(
-                "Props Report",
-                sortObject(
-                  result.propUsage,
-                  "desc",
-                  (k) => result.componentUsage[k]
-                ).map(([componentName, propUsage]) => {
-                  const total = result.componentUsage[componentName];
-                  return new TreeFolder(
-                    `<${componentName}>${sep}${total}`,
-                    sortObjectValuesDesc(propUsage).map(([propName, count]) => {
-                      const pct = ((count / total) * 100).toFixed(0);
-                      return new TreeInfo(
-                        `${count}${sep}${propName}${sep}${pct}%`
-                      );
-                    })
-                  );
-                })
-              )
-            : new TreeFolder(
-                "Lines Report",
-                sortObjectKeysAsc(result.lineUsage).map(
-                  ([componentName, lineUsage]) => {
-                    return new TreeFolder(
-                      componentName,
-                      sortObjectKeysAsc(lineUsage).map(
-                        ([propName, objects]) => {
-                          return new TreeFolder(
-                            propName,
-                            objects.map((obj) => {
-                              return new TreeOpenFile(
-                                obj.propCode,
-                                obj.filename,
-                                obj.startLoc.line,
-                                obj.startLoc.column,
-                                obj.endLoc.line,
-                                obj.endLoc.column
-                              );
-                            })
-                          );
-                        }
-                      )
-                    );
-                  }
-                )
-              ),
-        ];
-      }
-      default:
-        assertNever(this.mode);
-    }
+    return this._render();
   }
 }
 
 class TreeItem extends vscode.TreeItem {
   children: TreeItem[] = [];
+  parent?: TreeItem;
 }
 
 class TreeFolder extends TreeItem {
@@ -326,25 +370,70 @@ class TreeFolder extends TreeItem {
     if (children.length === 0) {
       this.children = [new TreeInfo("No results")];
     } else {
-      this.children = children.filter((c) => c) as TreeItem[];
+      this.children = filterGaps(children);
+    }
+    for (const kid of this.children) {
+      kid.parent = this;
     }
     this.collapsibleState = vscode.TreeItemCollapsibleState.Expanded;
   }
+
+  iconPath = vscode.ThemeIcon.Folder;
+}
+
+class TreeComponent extends TreeFolder {
+  iconPath = new vscode.ThemeIcon("symbol-class");
+}
+
+class TreeProp extends TreeFolder {
+  iconPath = new vscode.ThemeIcon("symbol-field");
+}
+
+class TreeErrors extends TreeFolder {
+  iconPath = new vscode.ThemeIcon("error");
+}
+
+class TreeSuggestions extends TreeFolder {
+  iconPath = new vscode.ThemeIcon("info");
 }
 
 class TreeInfo extends TreeItem {
-  constructor(label: string) {
+  constructor(label: string, description?: string) {
     super(label);
+    this.description = description;
+    if (description) {
+      this.tooltip = `${label}  ${description}`;
+    }
     this.collapsibleState = vscode.TreeItemCollapsibleState.None;
   }
 }
 
-class TreeCommand extends TreeItem {
-  constructor(label: string, command: string, args: any[]) {
-    super(label);
-    this.collapsibleState = vscode.TreeItemCollapsibleState.None;
-    this.command = { title: label, command, arguments: args };
+class TreeLoading extends TreeInfo {
+  constructor() {
+    super("Loading...");
   }
+
+  iconPath = new vscode.ThemeIcon("loading");
+}
+
+class TreeCommandRun extends TreeItem {
+  constructor() {
+    super("Run");
+    this.collapsibleState = vscode.TreeItemCollapsibleState.None;
+    this.command = { title: "Run", command: "jsxInfo.run" };
+  }
+
+  iconPath = new vscode.ThemeIcon("play");
+}
+
+class TreeCommandRefresh extends TreeItem {
+  constructor() {
+    super("Refresh");
+    this.collapsibleState = vscode.TreeItemCollapsibleState.None;
+    this.command = { title: "Refresh", command: "jsxInfo.refresh" };
+  }
+
+  iconPath = new vscode.ThemeIcon("sync");
 }
 
 class TreeOpenFile extends TreeItem {
@@ -361,7 +450,7 @@ class TreeOpenFile extends TreeItem {
     this.command = {
       title: label,
       command: "jsxInfo._openFile",
-      arguments: [filename, startLine, startColumn, endLine, endColumn],
+      arguments: [{ filename, startLine, startColumn, endLine, endColumn }],
     };
   }
 }
