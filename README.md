@@ -1,8 +1,16 @@
 # JSX Info for VS Code
 
+![](img/promo.png)
+
+## Video Demo
+
+Watch the [demo video on YouTube](https://www.youtube.com/watch?v=HUGhkelL2jE&feature=youtu.be).
+
 ## What is it?
 
 JSX Info is a VS Code extension for [jsx-info](https://www.npmjs.com/package/jsx-info). It can analyze your code base and display reports about how JSX is used.
+
+JSX Info can help you answer the following questions, and more!
 
 - **How many times is each component used?**
 
