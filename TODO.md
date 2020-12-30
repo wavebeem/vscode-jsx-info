@@ -1,2 +1,0 @@
-- Make an icon
-- Submit to the store
