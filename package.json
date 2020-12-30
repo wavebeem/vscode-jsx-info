@@ -2,7 +2,7 @@
   "name": "vscode-jsx-info",
   "displayName": "JSX Info",
   "description": "VS Code integration for jsx-info",
-  "version": "0.1.5",
+  "version": "1.0.0",
   "publisher": "wavebeem",
   "main": "./dist/extension.bundle.js",
   "icon": "img/icon.png",
