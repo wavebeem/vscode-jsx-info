@@ -1,3 +1,7 @@
+# v0.1.4
+
+- Updated the icon
+
 # v0.1.3
 
 - Fixed crash on start
