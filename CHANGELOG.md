@@ -1,3 +1,7 @@
+# v1.0.0
+
+- Adds link to Youtube video showing a demo
+
 # v0.1.5
 
 - Updated the icon again
