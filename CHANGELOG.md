@@ -1,3 +1,7 @@
+# v0.1.3
+
+- Fixed crash on start
+
 # v0.1.2
 
 - README update
