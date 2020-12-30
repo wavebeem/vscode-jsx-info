@@ -1,3 +1,7 @@
+# v0.1.5
+
+- Updated the icon again
+
 # v0.1.4
 
 - Updated the icon
