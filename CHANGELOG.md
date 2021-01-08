@@ -1,3 +1,8 @@
+# v1.0.1
+
+- Upgrades jsx-info to fix a bug where props were ignored when searching for
+  specific props in a lines report
+
 # v1.0.0
 
 - Adds link to Youtube video showing a demo
