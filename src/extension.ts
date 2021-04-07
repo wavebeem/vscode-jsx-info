@@ -43,7 +43,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("jsxInfo.run", cmdRun),
     vscode.commands.registerCommand("jsxInfo.refresh", cmdRefresh),
     // This command isn't exported in package.json because it's an internal
-    // thing used be the tree view
+    // thing used by the tree view
     vscode.commands.registerCommand("jsxInfo._openFile", cmdOpenFile)
   );
   logger.info("JSX Info loaded");
