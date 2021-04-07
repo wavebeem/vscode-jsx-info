@@ -1,4 +1,4 @@
-# Unreleased
+# v1.0.2
 
 - Fixes a bug where jsx-info could fail to run commands if you haven't
   interacted with the sidebar UI yet
