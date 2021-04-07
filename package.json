@@ -38,7 +38,9 @@
     "Other"
   ],
   "activationEvents": [
-    "onView:jsxInfo"
+    "onView:jsxInfo",
+    "onCommand:jsxInfo.run",
+    "onCommand:jsxInfo.refresh"
   ],
   "contributes": {
     "views": {

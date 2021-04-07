@@ -1,3 +1,8 @@
+# Unreleased
+
+- Fixes a bug where jsx-info could fail to run commands if you haven't
+  interacted with the sidebar UI yet
+
 # v1.0.1
 
 - Upgrades jsx-info to fix a bug where props were ignored when searching for
