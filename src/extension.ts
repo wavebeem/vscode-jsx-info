@@ -2,44 +2,49 @@ import * as vscode from "vscode";
 import * as jsxInfo from "jsx-info";
 import * as logger from "./logger";
 
-export function activate(_context: vscode.ExtensionContext) {
+export function activate(context: vscode.ExtensionContext) {
   const jsxInfoProvider = new JSXInfoProvider();
   const treeView = vscode.window.createTreeView("jsxInfo", {
     treeDataProvider: jsxInfoProvider,
     showCollapseAll: true,
   });
-  vscode.commands.registerCommand("jsxInfo.run", async () => {
+  async function cmdRun() {
     try {
       await jsxInfoProvider.run(treeView);
     } catch (err) {
       vscode.window.showErrorMessage(err.message);
       logger.fail(err.message);
     }
-  });
-  vscode.commands.registerCommand("jsxInfo.refresh", async () => {
+  }
+  async function cmdRefresh() {
     try {
       await jsxInfoProvider.refresh(treeView);
     } catch (err) {
       vscode.window.showErrorMessage(err.message);
       logger.fail(err.message);
     }
-  });
-  vscode.commands.registerCommand(
-    "jsxInfo._openFile",
-    async (options: {
-      filename: string;
-      startLine: number;
-      startColumn: number;
-      endLine: number;
-      endColumn: number;
-    }) => {
-      try {
-        await openFile(options);
-      } catch (err) {
-        vscode.window.showErrorMessage(err.message);
-        logger.fail(err.message);
-      }
+  }
+  async function cmdOpenFile(options: {
+    filename: string;
+    startLine: number;
+    startColumn: number;
+    endLine: number;
+    endColumn: number;
+  }) {
+    try {
+      await openFile(options);
+    } catch (err) {
+      vscode.window.showErrorMessage(err.message);
+      logger.fail(err.message);
     }
+  }
+  // Dispose the commands when the extension is deactivated
+  context.subscriptions.push(
+    vscode.commands.registerCommand("jsxInfo.run", cmdRun),
+    vscode.commands.registerCommand("jsxInfo.refresh", cmdRefresh),
+    // This command isn't exported in package.json because it's an internal
+    // thing used be the tree view
+    vscode.commands.registerCommand("jsxInfo._openFile", cmdOpenFile)
   );
   logger.info("JSX Info loaded");
 }
@@ -48,6 +53,7 @@ function filterGaps<A>(items: (A | undefined)[]): A[] {
   return items.filter((a) => a !== undefined) as A[];
 }
 
+/** Open file to the given position */
 async function openFile({
   filename,
   startLine,
@@ -74,6 +80,7 @@ async function openFile({
   editor.selection = new vscode.Selection(range.start, range.end);
 }
 
+/** Sorted entries for an object, good for displaying objects in a UI */
 function sortObject<A>(
   dict: Record<string, A>,
   direction: "asc" | "desc",
@@ -94,14 +101,17 @@ function sortObject<A>(
   return items;
 }
 
+/** Sort object descending by values */
 function sortObjectValuesDesc<A>(dict: Record<string, A>): [string, A][] {
   return sortObject(dict, "desc", (_k, v) => v);
 }
 
+/** Sort object ascending by keys */
 function sortObjectKeysAsc<A>(dict: Record<string, A>): [string, A][] {
   return sortObject(dict, "asc", (k, _v) => k);
 }
 
+/** Overall extension state */
 type Mode =
   | { name: "empty" }
   | { name: "loading"; options: Options }
