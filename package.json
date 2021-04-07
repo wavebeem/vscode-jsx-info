@@ -19,7 +19,7 @@
     "vscode:prepublish": "npm run build",
     "build": "webpack --mode production",
     "start": "webpack --mode development --watch",
-    "postversion": "git push && git push --tags && vsce publish"
+    "postversion": "git push --follow-tags && vsce publish"
   },
   "devDependencies": {
     "@types/node": "^14.14.20",
